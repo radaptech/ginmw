@@ -1,8 +1,10 @@
 # ginmw — design
 
-Lib pessoal de middlewares Gin, extraída do `sistema-OS` e do `SGE`. Uso
-único (você), sem consumidor externo — o design prioriza corrigir a
-divergência entre os dois projetos, não flexibilidade genérica.
+Lib pessoal de middlewares Gin, extraída de dois backends internos em
+produção (chamados aqui de Projeto A e Projeto B) que tinham cada um a
+sua cópia quase idêntica — e já divergente — desse código. Uso único
+(você), sem consumidor externo — o design prioriza corrigir a
+divergência entre os dois, não flexibilidade genérica.
 
 ## Não-objetivos
 
@@ -41,8 +43,9 @@ lista é o motivo da lib, não só um changelog.
 
 ### 1. Claim do perfil/role é configurável, não fixo
 
-OS usa `"perfil"`, SGE usa `"role"`. Em vez de forçar um nome (quebraria
-os tokens já emitidos em produção), a chave do claim é uma opção:
+Projeto A usa `"perfil"`, Projeto B usa `"role"`. Em vez de forçar um
+nome (quebraria os tokens já emitidos em produção), a chave do claim é
+uma opção:
 
 ```go
 JWT(secret, WithRoleClaim("perfil"))  // default: "perfil"
@@ -53,38 +56,41 @@ não da lib.
 
 ### 2. IDs são sempre `int64`
 
-OS usa `int64`, SGE usa `int32` (herdado do sqlc). A lib padroniza em
-`int64` — é o que `jwt.MapClaims` já entrega (claims JSON viram
-`float64`, e a conversão natural é pra `int64`). Nos call-sites do SGE
-que esperam `int32`, um cast explícito no controller. É custo de migração
-do SGE, não da lib — documentado no README, não resolvido por generics.
+Projeto A usa `int64`, Projeto B usa `int32` (herdado do sqlc). A lib
+padroniza em `int64` — é o que `jwt.MapClaims` já entrega (claims JSON
+viram `float64`, e a conversão natural é pra `int64`). Nos call-sites do
+Projeto B que esperam `int32`, um cast explícito no controller. É custo
+de migração do Projeto B, não da lib — documentado no README, não
+resolvido por generics.
 
 ### 3. Token incompleto sempre falha fechado
 
-OS rejeita token sem `tenantId` ou perfil (`401`); SGE aceita e segue com
-contexto parcial (`MiddJtw.go:74-78`, `if ok` sem `else`). A lib segue o
-comportamento do OS: **qualquer claim obrigatório ausente aborta com
-401**. Isso é a correção de bug mencionada na conversa anterior, não uma
-opção — não dá pra configurar "ignorar claim ausente".
+Projeto A rejeita token sem `tenantId` ou perfil (`401`); Projeto B
+aceita e segue com contexto parcial (claim ausente tratada com `if ok`
+sem `else`, no meio do parsing do token). A lib segue o comportamento do
+Projeto A: **qualquer claim obrigatório ausente aborta com 401**. Isso
+é correção de bug, não uma opção — não dá pra configurar "ignorar claim
+ausente".
 
 ### 4. Corpo de erro nunca vaza detalhe interno
 
-`SGE/TenantId.go:42` devolve `"detalhes": err.Error()` pro cliente. A lib
-nunca inclui erro cru na resposta — loga server-side (via um
-`log.Printf` simples, sem logger injetável, é o que os dois já fazem) e
-devolve só `{"error": "<mensagem fixa>"}`.
+O middleware de tenant do Projeto B devolvia `"detalhes": err.Error()`
+pro cliente. A lib nunca inclui erro cru na resposta — loga server-side
+(via um `log.Printf` simples, sem logger injetável, é o que os dois já
+fazem) e devolve só `{"error": "<mensagem fixa>"}`.
 
 ### 5. Uma única chave de resposta: `"error"`
 
-`SGE/roles.go` usa `"erro"`; todo o resto usa `"error"`. A lib usa
-`"error"` em todo lugar. Front não precisa tratar as duas.
+O middleware de RBAC do Projeto B usava `"erro"`; todo o resto usa
+`"error"`. A lib usa `"error"` em todo lugar. Front não precisa tratar
+as duas.
 
 ### 6. Getters seguem um padrão só: `Get<Coisa>(c) (T, bool)`
 
 Hoje: `GetTenantID`, `GetUserID`, `GetUserPerfil` (OK) convivem com
-`ctx.GetString("user_role")` direto no controller (SGE, sem helper). A
-lib expõe getter pra todo valor que ela injeta — nenhum controller lê a
-chave do contexto na mão:
+`ctx.GetString("user_role")` direto no controller (Projeto B, sem
+helper). A lib expõe getter pra todo valor que ela injeta — nenhum
+controller lê a chave do contexto na mão:
 
 ```go
 UserID(c)   (int64, bool)
@@ -98,28 +104,29 @@ porque são fontes diferentes (ver decisão 7).
 
 ### 7. Duas fontes de tenant continuam separadas, nomeadas sem ambiguidade
 
-O comentário do OS (`middJwt.go`) já registra o motivo: tenant do
-header (`X-Tenant-ID`, pré-login) e tenant do token (pós-login) não podem
-ser a mesma chave de contexto, senão um admin do tenant A escreve no
-tenant B trocando o header. A lib preserva a separação com nomes que
-deixam isso óbvio: `TenantIDFromHeader` vs `TenantID`. O SGE hoje usa só
-a versão de header mesmo após o login (61 call-sites) — ponto de atenção
-na migração, não algo que a lib decide por ele.
+O comentário do JWT middleware do Projeto A já registra o motivo: tenant
+do header (`X-Tenant-ID`, pré-login) e tenant do token (pós-login) não
+podem ser a mesma chave de contexto, senão um admin do tenant A escreve
+no tenant B trocando o header. A lib preserva a separação com nomes que
+deixam isso óbvio: `TenantIDFromHeader` vs `TenantID`. O Projeto B hoje
+usa só a versão de header mesmo após o login (61 call-sites) — ponto de
+atenção na migração, não algo que a lib decide por ele.
 
 ### 8. CORS: domínio é parâmetro, `localhost` é sempre liberado
 
-`radaptech.com.br` estava hard-coded. Vira `CORS("radaptech.com.br")`.
-Liberar `*.localhost` continua sempre ligado (é ambiente de dev, não
-precisa de flag).
+O domínio de produção estava hard-coded em cada projeto. Vira
+`CORS("radaptech.com.br")`. Liberar `*.localhost` continua sempre ligado
+(é ambiente de dev, não precisa de flag).
 
-### 9. `Require` no lugar de `Permitir`/`VerificaRole`/`VerificaSuperAdmin`
+### 9. `Require` no lugar de três funções de RBAC redundantes
 
-Três funções fazendo a mesma checagem (perfil atual ∈ lista permitida).
-Uma função variádica cobre os três casos, incluindo super-admin:
+Três funções fazendo a mesma checagem (perfil atual ∈ lista permitida),
+espalhadas entre os dois projetos com nomes diferentes. Uma função
+variádica cobre todos os casos, incluindo super-admin:
 
 ```go
-Require("admin", "tecnico")   // substitui Permitir
-Require("super_admin")        // substitui VerificaSuperAdmin
+Require("admin", "tecnico")
+Require("super_admin")
 ```
 
 Falha fechada preservada: sem perfil no contexto, nada casa, nega com
@@ -130,16 +137,16 @@ válida, só não tem permissão).
 
 Já são idênticos entre os dois projetos (rate limiter por IP com token
 bucket, cleanup a cada 5min) ou só faltam num dos dois (Timeout só no
-OS, SecurityHeaders só no SGE) — sem conflito pra resolver, só mover.
-`Timeout` carrega o comentário do OS sobre o pooler do Postgres; é
-contexto que qualquer projeto futuro vai precisar pra não "otimizar" o
-prazo de volta pra zero.
+Projeto A, SecurityHeaders só no Projeto B) — sem conflito pra resolver,
+só mover. `Timeout` carrega o comentário original sobre o pooler do
+Postgres; é contexto que qualquer projeto futuro vai precisar pra não
+"otimizar" o prazo de volta pra zero.
 
 ## Tenant: lookup injetado, sem depender de `repository`
 
-A lib não pode importar o `repository` de cada projeto (SGE usa
-`sql.ErrNoRows`, OS usa `pgx.ErrNoRows`, tipos de retorno diferentes). O
-middleware recebe uma função:
+A lib não pode importar o `repository` de cada projeto (Projeto B usa
+`sql.ErrNoRows`, Projeto A usa `pgx.ErrNoRows`, tipos de retorno
+diferentes). O middleware recebe uma função:
 
 ```go
 type TenantLookupFunc func(ctx context.Context, subdominio string) (id int64, err error)
@@ -149,9 +156,8 @@ Tenant(lookup TenantLookupFunc, notFound error)
 
 `notFound` é o sentinel que o `lookup` devolve quando não acha — cada
 projeto passa o seu (`pgx.ErrNoRows` ou `sql.ErrNoRows`), a lib compara
-com `errors.Is` e decide 404 vs 500. Isso também resolve o log de debug
-que o SGE tem e o OS não (`log.Printf("subdominio: %s")`): a lib loga
-sempre, no padrão do OS (sem o log a mais).
+com `errors.Is` e decide 404 vs 500. Isso também resolve um log de debug
+que só um dos dois projetos tinha: a lib loga sempre, sem o log a mais.
 
 ## Adoção
 
