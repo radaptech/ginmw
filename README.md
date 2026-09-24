@@ -1,5 +1,7 @@
 # ginmw
 
+[![CI](https://github.com/radaptech/ginmw/actions/workflows/ci.yml/badge.svg)](https://github.com/radaptech/ginmw/actions/workflows/ci.yml)
+
 Middlewares Gin para SaaS multi-tenant: CORS, rate limit, timeout, headers
 de segurança, JWT, tenant por subdomínio e checagem de perfil — extraídos
 de dois backends em produção que tinham, cada um, a sua cópia quase
