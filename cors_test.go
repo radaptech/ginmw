@@ -2,6 +2,7 @@ package ginmw
 
 import (
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -71,5 +72,24 @@ func TestCORSPreflight(t *testing.T) {
 	}
 	if w.Header().Get("Access-Control-Allow-Credentials") != "true" {
 		t.Error("preflight sem Access-Control-Allow-Credentials: true")
+	}
+}
+
+// O front só consegue ler o X-Request-ID de outra origem se ele vier no
+// Access-Control-Expose-Headers; sem isso o suporte perde o elo com o log.
+func TestCORSExpoeRequestID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	r := gin.New()
+	r.Use(CORS("radaptech.com.br"))
+	r.GET("/", func(c *gin.Context) { c.Status(200) })
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Origin", "https://app.radaptech.com.br")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if got := w.Header().Get("Access-Control-Expose-Headers"); !strings.Contains(got, "X-Request-Id") && !strings.Contains(got, "X-Request-ID") {
+		t.Fatalf("X-Request-ID não exposto: %q", got)
 	}
 }

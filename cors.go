@@ -46,7 +46,8 @@ func CORS(domain string) gin.HandlerFunc {
 			"X-Tenant-ID",
 		},
 
-		ExposeHeaders: []string{"Content-Length", "Content-Disposition", "Set-Cookie"},
+		// X-Request-ID: sem expor, o front em outra origem lê null e o erro sai sem o código pro suporte.
+		ExposeHeaders: []string{"Content-Length", "Content-Disposition", "Set-Cookie", "X-Request-ID"},
 
 		AllowCredentials:          true,
 		OptionsResponseStatusCode: http.StatusNoContent,
